@@ -1,0 +1,41 @@
+name: Site check
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate HTML
+        run: npx --yes html-validate@8 "**/*.html"
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress --offline "**/*.html"
+          fail: true
+      - name: Headless load check
+        run: |
+          npm i --no-save playwright@1 && npx playwright install --with-deps chromium
+          npx --yes http-server -p 8080 -s . &
+          sleep 2
+          cat > load.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const b = await chromium.launch(); const p = await b.newPage();
+          const errs = [];
+          p.on('pageerror', e => errs.push(e.message));
+          p.on('console', m => m.type() === 'error' && errs.push(m.text()));
+          const r = await p.goto('http://localhost:8080/', { waitUntil: 'networkidle' });
+          if (!r.ok()) errs.push('HTTP ' + r.status());
+          await b.close();
+          if (errs.length) { console.error(errs.join('\n')); process.exit(1); }
+          console.log('Loaded with no errors');
+          JS
+          node load.mjs
